@@ -1872,7 +1872,15 @@ and type_expr ?(mode=MGet) ctx (e,p) (with_type:WithType.t) =
 			| _ -> follow_null tmin
 		in
 		let e1_null_t = if is_nullable e1.etype then e1.etype else ctx.t.tnull e1.etype in
-		let e1 = vr#as_var (Option.default "tmp" (WithType.get_expected_name with_type)) {e1 with etype = e1_null_t} in
+		let var_name = match WithType.get_expected_name with_type with
+			| None
+			(* TODO: why does this happen? *)
+			| Some "" ->
+				"tmp"
+			| Some name ->
+				name
+		in
+		let e1 = vr#as_var var_name {e1 with etype = e1_null_t} in
 		let e_null = Builder.make_null e1_null_t e1.epos in
 		let e_cond = mk (TBinop(OpNotEq,e1,e_null)) ctx.t.tbool e1.epos in
 		let e_if = mk (TIf(e_cond,cast e1,Some e2)) iftype p in
