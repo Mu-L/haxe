@@ -37,13 +37,7 @@
 #	include <unistd.h>
 #	include <errno.h>
 #	include <string.h>
-#	ifndef __APPLE__
-#		if defined(__FreeBSD__) || defined(__DragonFly__)
-#			include <sys/wait.h>
-#		else
-#			include <wait.h>
-#		endif
-#	endif
+#	include <sys/wait.h>
 #endif
 
 #ifdef _WIN32
@@ -67,10 +61,10 @@
 #define val_null Val_int(0)
 #define val_some(v) Field(v,0)
 #define val_int(v) Int_val(v)
-#define neko_error() failwith(__FUNCTION__)
+#define neko_error() caml_failwith(__FUNCTION__)
 
 static value alloc_private( int size ) {
-	return alloc((size + sizeof(value) - 1) / sizeof(value), Abstract_tag);
+	return caml_alloc((size + sizeof(value) - 1) / sizeof(value), Abstract_tag);
 }
 
 // --- buffer api

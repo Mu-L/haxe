@@ -64,7 +64,7 @@ let rec need_parent e =
 	| TConst _ | TLocal _ | TArray _ | TField _ | TEnumParameter _ | TEnumIndex _ | TParenthesis _
 	| TCall _ | TNew _ | TTypeExpr _ | TObjectDecl _ | TArrayDecl _ | TIdent _ -> false
 	| TCast (e,None) | TMeta(_,e) -> need_parent e
-	| TCast _ | TThrow _ | TReturn _ | TTry _ | TSwitch _ | TFor _ | TIf _ | TWhile _ | TBinop _ | TContinue | TBreak
+	| TCast _ | TThrow _ | TReturn _ | TTry _ | TSwitch _ | TIf _ | TWhile _ | TBinop _ | TContinue | TBreak
 	| TBlock _ | TVar _ | TFunction _ | TUnop _ -> true
 
 let sanitize_expr com e =
@@ -82,7 +82,6 @@ let sanitize_expr com e =
 		(* complex expressions are the one that once generated to source consists in several expressions  *)
 		match e.eexpr with
 		| TVar _	(* needs to be put into blocks *)
-		| TFor _	(* a temp var is needed for holding iterator *)
 		| TCall ({ eexpr = TIdent "__js__" },_) (* we never know *)
 			-> block e
 		| _ -> e
@@ -92,7 +91,6 @@ let sanitize_expr com e =
 		match e.eexpr with
 		| TIf (_,_,None) -> true
 		| TWhile (_,e,NormalWhile) -> has_if e
-		| TFor (_,_,e) -> has_if e
 		| _ -> false
 	in
 	match e.eexpr with
@@ -156,9 +154,6 @@ let sanitize_expr com e =
 		let e1 = parent e1 in
 		let e2 = complex e2 in
 		{ e with eexpr = TWhile (e1,e2,flag) }
-	| TFor (v,e1,e2) ->
-		let e2 = complex e2 in
-		{ e with eexpr = TFor (v,e1,e2) }
 	| TFunction f ->
 		let f = (match f.tf_expr.eexpr with
 			| TBlock exprs ->
@@ -224,8 +219,6 @@ let reduce_expr com e =
 			) l with
 			| [] -> ec
 			| l -> { e with eexpr = TBlock (List.rev (ec :: l)) })
-	| TMeta ((Meta.CompilerGenerated,_,_),ec) ->
-		{ ec with epos = e.epos }
 	| TParenthesis ec ->
 		{ ec with epos = e.epos }
 	| TTry (e,[]) ->
@@ -333,8 +326,7 @@ let reduce_control_flow com e = match e.eexpr with
 		(* TODO: figure out what's wrong with these targets *)
 		let require_cast = match com.platform with
 			| Cpp | Flash -> true
-			| Java -> defined com Define.Jvm
-			| Cs -> defined com Define.EraseGenerics || defined com Define.FastCast
+			| Jvm -> true
 			| _ -> false
 		in
 		Texpr.reduce_unsafe_casts ~require_cast e e.etype
@@ -386,7 +378,7 @@ let reduce_expression ctx e =
 	if ctx.com.foptimize then
 		(* We go through rec_stack_default here so that the current field is on inline_stack. This prevents self-recursive
 		   inlining (#7569). *)
-		rec_stack_default inline_stack ctx.curfield (fun cf' -> cf' == ctx.curfield) (fun () -> reduce_loop ctx e) e
+		rec_stack_default inline_stack ctx.f.curfield (fun cf' -> cf' == ctx.f.curfield) (fun () -> reduce_loop ctx e) e
 	else
 		e
 

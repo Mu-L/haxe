@@ -375,11 +375,11 @@ module ConstPropagation = DataFlow(struct
 	let top = Top
 	let bottom = Bottom
 
-	let rec equals lat1 lat2 = match lat1,lat2 with
+	let equals lat1 lat2 = match lat1,lat2 with
 		| Top,Top | Bottom,Bottom -> true
 		| Const ct1,Const ct2 -> ct1 = ct2
 		| Null t1,Null t2 -> t1 == t2
-		| EnumValue(i1,tl1),EnumValue(i2,tl2) -> i1 = i2 && safe_for_all2 equals tl1 tl2
+		| EnumValue(i1,[]),EnumValue(i2,[]) -> i1 = i2
 		| ModuleType(mt1,_),ModuleType (mt2,_) -> mt1 == mt2
 		| _ -> false
 
@@ -649,7 +649,6 @@ module LocalDce = struct
 			| TField(_,fa) when PurityState.is_explicitly_impure fa -> raise Exit
 			| TNew _ | TCall _ | TBinop ((OpAssignOp _ | OpAssign),_,_) | TUnop ((Increment|Decrement),_,_) -> raise Exit
 			| TReturn _ | TBreak | TContinue | TThrow _ | TCast (_,Some _) -> raise Exit
-			| TFor _ -> raise Exit
 			| TArray _ | TEnumParameter _ | TEnumIndex _ | TCast (_,None) | TBinop _ | TUnop _ | TParenthesis _ | TMeta _ | TWhile _
 			| TField _ | TIf _ | TTry _ | TSwitch _ | TArrayDecl _ | TBlock _ | TObjectDecl _ | TVar _ -> Type.iter loop e
 		in
@@ -661,14 +660,14 @@ module LocalDce = struct
 
 	let apply ctx =
 		let is_used v =
-			has_var_flag v VUsed
+			has_var_flag v VAnalyzed
 		in
 		let keep v =
-			is_used v || ((match v.v_kind with VUser _ | VInlined -> true | _ -> false) && not ctx.config.local_dce) || ExtType.has_reference_semantics v.v_type || has_var_flag v VCaptured || Meta.has Meta.This v.v_meta
+			is_used v || ((match v.v_kind with VUser _ | VInlined | VInlinedConstructorVariable _ -> true | _ -> false) && not ctx.config.local_dce) || ExtType.has_reference_semantics v.v_type || has_var_flag v VCaptured || Meta.has Meta.This v.v_meta
 		in
 		let rec use v =
 			if not (is_used v) then begin
-				add_var_flag v VUsed;
+				add_var_flag v VAnalyzed;
 				(try expr (get_var_value ctx.graph v) with Not_found -> ());
 				begin match Ssa.get_reaching_def ctx.graph v with
 					| None ->
@@ -676,7 +675,7 @@ module LocalDce = struct
 						   reaching definition (issue #10972). Simply marking it as being used should be sufficient. *)
 						let v' = get_var_origin ctx.graph v in
 						if not (is_used v') then
-							add_var_flag v' VUsed
+							add_var_flag v' VAnalyzed
 					| Some v ->
 						use v;
 				end
@@ -1010,11 +1009,17 @@ module Run = struct
 			match e.eexpr with
 			| TFunction tf ->
 				let get_t t = if ExtType.is_void t then tf.tf_type else t in
+				let doesnt_like_complex_expressions = match actx.com.platform with
+					| Cpp | Hl | Jvm | Php | Flash ->
+						true
+					| _ ->
+						false
+				in
 				let rec loop e = match e.eexpr with
 					| TBlock [e1] ->
 						loop e1
 					(* If there's a complex expression, keep the function and generate a call to it. *)
-					| TBlock _ | TIf _ | TSwitch _ | TTry _ when actx.com.platform = Cpp || actx.com.platform = Hl ->
+					| TBlock _ | TIf _ | TSwitch _ | TTry _ when doesnt_like_complex_expressions ->
 						raise Exit
 					(* Remove generated return *)
 					| TReturn (Some e) ->
@@ -1098,7 +1103,7 @@ module Run = struct
 			let e = try
 				run_on_expr actx e
 			with
-			| Error.Error _ | Abort _ | Sys.Break as exc ->
+			| Error.Error _ | Sys.Break as exc ->
 				maybe_debug();
 				raise exc
 			| exc ->
@@ -1126,7 +1131,7 @@ module Run = struct
 			| None -> ()
 			| Some f -> process_field false f;
 		end;
-		begin match c.cl_init with
+		begin match TClass.get_cl_init c with
 			| None ->
 				()
 			| Some e ->
@@ -1138,7 +1143,7 @@ module Run = struct
 					| TFunction tf -> tf.tf_expr
 					| _ -> die "" __LOC__
 				in
-				c.cl_init <- Some e
+				TClass.set_cl_init c e
 		end
 
 	let run_on_type com config t =
