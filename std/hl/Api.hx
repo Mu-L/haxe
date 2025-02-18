@@ -26,6 +26,9 @@ extern class Api {
 	static inline function rethrow(v:Dynamic):Void {
 		untyped $rethrow(v);
 	}
+	static inline function unsafeCast<From,To>(v:From):To {
+		return untyped $unsafecast(v);
+	}
 	@:hlNative("std", "obj_get_field") static function getField(obj:Dynamic, hash:Int):Dynamic;
 	@:hlNative("std", "obj_set_field") static function setField(obj:Dynamic, hash:Int, value:Dynamic):Void;
 	@:hlNative("std", "obj_has_field") static function hasField(obj:Dynamic, hash:Int):Bool;
@@ -49,4 +52,11 @@ extern class Api {
 	#if (hl_ver >= version("1.13.0"))
 	@:hlNative("?std", "sys_has_debugger") static function hasDebugger() : Bool;
 	#end
+	#if (hl_ver >= version("1.15.0"))	
+	@:hlNative("?std", "register_guid_name") private static function _registerGUIDName( guid : hl.I64, bytes : hl.Bytes ) : Void;
+	static inline function registerGUIDName( guid : GUID, name : String ) {
+		return _registerGUIDName(guid,@:privateAccess name.bytes);
+	}
+	#end
+	
 }

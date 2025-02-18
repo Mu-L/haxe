@@ -17,7 +17,6 @@ let iter f e =
 		()
 	| TArray (e1,e2)
 	| TBinop (_,e1,e2)
-	| TFor (_,e1,e2)
 	| TWhile (e1,e2,_) ->
 		f e1;
 		f e2;
@@ -66,7 +65,7 @@ let check_expr predicate e =
 	match e.eexpr with
 		| TConst _ | TLocal _ | TBreak | TContinue | TTypeExpr _ | TIdent _ ->
 			false
-		| TArray (e1,e2) | TBinop (_,e1,e2) | TFor (_,e1,e2) | TWhile (e1,e2,_) ->
+		| TArray (e1,e2) | TBinop (_,e1,e2) | TWhile (e1,e2,_) ->
 			predicate e1 || predicate e2;
 		| TThrow e | TField (e,_) | TEnumParameter (e,_,_) | TEnumIndex e | TParenthesis e
 		| TCast (e,_) | TUnop (_,_,e) | TMeta(_,e) ->
@@ -105,9 +104,6 @@ let map_expr f e =
 	| TBinop (op,e1,e2) ->
 		let e1 = f e1 in
 		{ e with eexpr = TBinop (op,e1,f e2) }
-	| TFor (v,e1,e2) ->
-		let e1 = f e1 in
-		{ e with eexpr = TFor (v,e1,f e2) }
 	| TWhile (e1,e2,flag) ->
 		let e1 = f e1 in
 		{ e with eexpr = TWhile (e1,f e2,flag) }
@@ -176,10 +172,6 @@ let map_expr_type f ft fv e =
 	| TBinop (op,e1,e2) ->
 		let e1 = f e1 in
 		{ e with eexpr = TBinop (op,e1,f e2); etype = ft e.etype }
-	| TFor (v,e1,e2) ->
-		let v = fv v in
-		let e1 = f e1 in
-		{ e with eexpr = TFor (v,e1,f e2); etype = ft e.etype }
 	| TWhile (e1,e2,flag) ->
 		let e1 = f e1 in
 		{ e with eexpr = TWhile (e1,f e2,flag); etype = ft e.etype }
@@ -189,6 +181,19 @@ let map_expr_type f ft fv e =
 		{ e with eexpr = TEnumParameter (f e1,ef,i); etype = ft e.etype }
 	| TEnumIndex e1 ->
 		{ e with eexpr = TEnumIndex (f e1); etype = ft e.etype }
+	| TField (e1,(FClosure(None,cf) as fa)) ->
+		let e1 = f e1 in
+		let fa = try
+			begin match quick_field e1.etype cf.cf_name with
+				| FInstance(c,tl,cf) ->
+					FClosure(Some(c,tl),cf)
+				| _ ->
+					raise Not_found
+			end
+		with Not_found ->
+			fa
+		in
+		{ e with eexpr = TField (e1,fa); etype = ft e.etype }
 	| TField (e1,v) ->
 		let e1 = f e1 in
 		let v = try
@@ -288,7 +293,6 @@ let rec equal e1 e2 = match e1.eexpr,e2.eexpr with
 	| TFunction tf1,TFunction tf2 -> tf1 == tf2
 	| TVar(v1,None),TVar(v2,None) -> v1 == v2
 	| TVar(v1,Some e1),TVar(v2,Some e2) -> v1 == v2 && equal e1 e2
-	| TFor(v1,ec1,eb1),TFor(v2,ec2,eb2) -> v1 == v2 && equal ec1 ec2 && equal eb1 eb2
 	| TIf(e1,ethen1,None),TIf(e2,ethen2,None) -> equal e1 e2 && equal ethen1 ethen2
 	| TIf(e1,ethen1,Some eelse1),TIf(e2,ethen2,Some eelse2) -> equal e1 e2 && equal ethen1 ethen2 && equal eelse1 eelse2
 	| TWhile(e1,eb1,flag1),TWhile(e2,eb2,flag2) -> equal e1 e2 && equal eb2 eb2 && flag1 = flag2
@@ -315,6 +319,7 @@ let duplicate_tvars f_this e =
 		let v2 = alloc_var v.v_kind v.v_name v.v_type v.v_pos in
 		v2.v_meta <- v.v_meta;
 		v2.v_extra <- v.v_extra;
+		v2.v_flags <- v.v_flags;
 		Hashtbl.add vars v.v_id v2;
 		v2;
 	in
@@ -323,9 +328,6 @@ let duplicate_tvars f_this e =
 		| TVar (v,eo) ->
 			let v2 = copy_var v in
 			{e with eexpr = TVar(v2, Option.map build_expr eo)}
-		| TFor (v,e1,e2) ->
-			let v2 = copy_var v in
-			{e with eexpr = TFor(v2, build_expr e1, build_expr e2)}
 		| TTry (e1,cl) ->
 			let cl = List.map (fun (v,e) ->
 				let v2 = copy_var v in
@@ -393,10 +395,6 @@ let foldmap f acc e =
 		let acc,e1 = f acc e1 in
 		let acc,e2 = f acc e2 in
 		acc,{ e with eexpr = TBinop (op,e1,e2) }
-	| TFor (v,e1,e2) ->
-		let acc,e1 = f acc e1 in
-		let acc,e2 = f acc e2 in
-		acc,{ e with eexpr = TFor (v,e1,e2) }
 	| TWhile (e1,e2,flag) ->
 		let acc,e1 = f acc e1 in
 		let acc,e2 = f acc e2 in
@@ -473,15 +471,14 @@ let foldmap f acc e =
 (* Collection of functions that return expressions *)
 module Builder = struct
 	let make_static_this c p =
-		let ta = mk_anon ~fields:c.cl_statics (ref (Statics c)) in
-		mk (TTypeExpr (TClassDecl c)) ta p
+		mk (TTypeExpr (TClassDecl c)) c.cl_type p
 
 	let make_typeexpr mt pos =
 		let t =
 			match resolve_typedef mt with
-			| TClassDecl c -> mk_anon ~fields:c.cl_statics (ref (Statics c))
-			| TEnumDecl e -> mk_anon (ref (EnumStatics e))
-			| TAbstractDecl a -> mk_anon (ref (AbstractStatics a))
+			| TClassDecl c -> c.cl_type
+			| TEnumDecl e -> e.e_type
+			| TAbstractDecl a -> TType(abstract_module_type a [],[])
 			| _ -> die "" __LOC__
 		in
 		mk (TTypeExpr mt) t pos
@@ -549,6 +546,21 @@ module Builder = struct
 
 	let index basic e index t p =
 		mk (TArray (e,mk (TConst (TInt (Int32.of_int index))) basic.tint p)) t p
+
+	let resolve_and_make_static_call c name args p =
+		ignore(c.cl_build());
+		let cf = try
+			PMap.find name c.cl_statics
+		with Not_found ->
+			die "" __LOC__
+		in
+		let ef = make_static_field c cf (mk_zero_range_pos p) in
+		let tret = match follow ef.etype with
+			| TFun(_,r) -> r
+			| _ -> assert false
+		in
+		mk (TCall (ef, args)) tret p
+
 end
 
 let set_default basic a c p =
@@ -566,7 +578,7 @@ let rec constructor_side_effects e =
 		true
 	| TField (_,FEnum _) ->
 		false
-	| TUnop _ | TArray _ | TField _ | TEnumParameter _ | TEnumIndex _ | TCall _ | TNew _ | TFor _ | TWhile _ | TSwitch _ | TReturn _ | TThrow _ ->
+	| TUnop _ | TArray _ | TField _ | TEnumParameter _ | TEnumIndex _ | TCall _ | TNew _ | TWhile _ | TSwitch _ | TReturn _ | TThrow _ ->
 		true
 	| TBinop _ | TTry _ | TIf _ | TBlock _ | TVar _
 	| TFunction _ | TArrayDecl _ | TObjectDecl _
@@ -585,6 +597,7 @@ let type_constant basic c p =
 	match c with
 	| Int (s,_) ->
 		if String.length s > 10 && String.sub s 0 2 = "0x" then raise_typing_error "Invalid hexadecimal integer" p;
+		if String.length s > 34 && String.sub s 0 2 = "0b" then raise_typing_error "Invalid binary integer" p;
 		(try mk (TConst (TInt (Int32.of_string s))) basic.tint p
 		with _ -> mk (TConst (TFloat s)) basic.tfloat p)
 	| Float (f,_) -> mk (TConst (TFloat f)) basic.tfloat p
@@ -611,11 +624,11 @@ let rec type_constant_value basic (e,p) =
 let is_constant_value basic e =
 	try (ignore (type_constant_value basic e); true) with Error {err_message = Custom _} -> false
 
-let for_remap basic v e1 e2 p =
-	let v' = alloc_var v.v_kind v.v_name e1.etype e1.epos in
-	let ev' = mk (TLocal v') e1.etype e1.epos in
-	let t1 = (Abstract.follow_with_abstracts e1.etype) in
-	let ehasnext = mk (TField(ev',try quick_field t1 "hasNext" with Not_found -> raise_typing_error (s_type (print_context()) t1 ^ "has no field hasNext()") p)) (tfun [] basic.tbool) e1.epos in
+let for_remap basic v etype e1 e2 p =
+	let v' = alloc_var v.v_kind v.v_name etype e1.epos in
+	let ev' = mk (TLocal v') etype e1.epos in
+	let t1 = (Abstract.follow_with_abstracts etype) in
+	let ehasnext = mk (TField(ev',try quick_field t1 "hasNext" with Not_found -> raise_typing_error (s_type (print_context()) t1 ^ " has no field hasNext()") p)) (tfun [] basic.tbool) e1.epos in
 	let ehasnext = mk (TCall(ehasnext,[])) basic.tbool ehasnext.epos in
 	let enext = mk (TField(ev',quick_field t1 "next")) (tfun [] v.v_type) e1.epos in
 	let enext = mk (TCall(enext,[])) v.v_type e1.epos in
@@ -731,10 +744,6 @@ let dump_with_pos tabs e =
 		| TBlock el ->
 			add "TBlock";
 			List.iter loop el
-		| TFor(v,e1,e2) ->
-			add ("TFor " ^ v.v_name);
-			loop e1;
-			loop e2;
 		| TIf(e1,e2,eo) ->
 			add "TIf";
 			loop e1;
@@ -792,10 +801,6 @@ let collect_captured_vars e =
 		| TVar(v,eo) ->
 			Option.may loop eo;
 			declare v
-		| TFor(v,e1,e2) ->
-			declare v;
-			loop e1;
-			loop e2;
 		| TFunction tf ->
 			List.iter (fun (v,_) -> declare v) tf.tf_args;
 			loop tf.tf_expr
@@ -913,8 +918,6 @@ module DeadEnd = struct
 					Option.map_default (loop ) true switch.switch_default (* true because we know it's exhaustive *)
 				in
 				loop switch.switch_subject || check_exhaustive ()
-			| TFor(_, e1, _) ->
-				loop e1
 			| TBinop(OpBoolAnd, e1, e2) ->
 				loop e1 || is_true_expr e1 && loop e2
 			| TBinop(OpBoolOr, e1, e2) ->

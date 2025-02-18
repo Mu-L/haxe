@@ -42,7 +42,7 @@ enum Message {
 	- `haxe.macro.TypeTools`
 **/
 class Context {
-	#if (neko || eval || display)
+	#if eval
 	/**
 		Displays a compilation error `msg` at the given `Position` `pos`
 		and aborts the current macro call.
@@ -112,6 +112,8 @@ class Context {
 
 		If a class path was declared relative, this method returns the relative
 		file path. Otherwise it returns the absolute file path.
+
+		If no type can be found, an exception of type `String` is thrown.
 	**/
 	public static function resolvePath(file:String):String {
 		return load("resolve_path", 1)(file);
@@ -175,6 +177,7 @@ class Context {
 		Returns `null` if the current macro is not a `@:genericBuild` macro.
 	**/
 	public static function getCallArguments():Null<Array<Expr>> {
+		assertInitMacrosDone(false);
 		return load("get_call_arguments", 0)();
 	}
 
@@ -184,6 +187,7 @@ class Context {
 		If no such class exists, `null` is returned.
 	**/
 	public static function getLocalClass():Null<Type.Ref<Type.ClassType>> {
+		assertInitMacrosDone(false);
 		var l:Type = load("get_local_type", 0)();
 		if (l == null)
 			return null;
@@ -197,6 +201,7 @@ class Context {
 		Returns the current module path in/on which the macro was called.
 	**/
 	public static function getLocalModule():String {
+		assertInitMacrosDone(false);
 		return load("get_local_module", 0)();
 	}
 
@@ -206,6 +211,7 @@ class Context {
 		If no such type exists, `null` is returned.
 	**/
 	public static function getLocalType():Null<Type> {
+		assertInitMacrosDone(false);
 		return load("get_local_type", 0)();
 	}
 
@@ -215,6 +221,7 @@ class Context {
 		If no such method exists, `null` is returned.
 	**/
 	public static function getLocalMethod():Null<String> {
+		assertInitMacrosDone(false);
 		return load("get_local_method", 0)();
 	}
 
@@ -225,6 +232,7 @@ class Context {
 		Modifying the returned array has no effect on the compiler.
 	**/
 	public static function getLocalUsing():Array<Type.Ref<Type.ClassType>> {
+		assertInitMacrosDone(false);
 		return load("get_local_using", 0)();
 	}
 
@@ -234,6 +242,7 @@ class Context {
 		Modifying the returned array has no effect on the compiler.
 	**/
 	public static function getLocalImports():Array<ImportExpr> {
+		assertInitMacrosDone(false);
 		return load("get_local_imports", 0)();
 	}
 
@@ -248,6 +257,7 @@ class Context {
 	**/
 	@:deprecated("Use Context.getLocalTVars() instead")
 	public static function getLocalVars():Map<String, Type> {
+		assertInitMacrosDone(false);
 		return load("local_vars", 1)(false);
 	}
 
@@ -256,6 +266,7 @@ class Context {
 		of `Type`.
 	**/
 	public static function getLocalTVars():Map<String, Type.TVar> {
+		assertInitMacrosDone(false);
 		return load("local_vars", 1)(true);
 	}
 
@@ -283,7 +294,7 @@ class Context {
 
 		@see https://haxe.org/manual/lf-condition-compilation.html
 	**/
-	public static function definedValue(key:String):String {
+	public static function definedValue(key:String):Null<String> {
 		return load("defined_value", 1)(key);
 	}
 
@@ -385,6 +396,15 @@ class Context {
 	}
 
 	/**
+		Parse file content for newlines, allowing positions to be resolved
+		properly inside that file later on (using `Context.parseInlineString`
+		for example). Works with both real and virtual files.
+	**/
+	public static function registerFileContents(file:String, content:String):Void {
+		load("register_file_contents", 2)(file, content);
+	}
+
+	/**
 		Builds an expression from `v`.
 
 		This method generates AST nodes depending on the macro-runtime value of
@@ -455,12 +475,15 @@ class Context {
 		is done running initialization macros, when typing begins.
 
 		`onAfterInitMacros` should be used to delay typer-dependant code from
-		your initalization macros, to properly separate configuration phase and
+		your initialization macros, to properly separate configuration phase and
 		actual typing.
 	**/
 	public static function onAfterInitMacros(callback:Void->Void):Void {
-		assertInitMacro();
-		load("on_after_init_macros", 1)(callback);
+		if (Context.initMacrosDone()) {
+			callback();
+		} else {
+			load("on_after_init_macros", 1)(callback);
+		}
 	}
 
 	/**
@@ -534,6 +557,7 @@ class Context {
 		build any type or trigger macros.
 	**/
 	public static function resolveComplexType(t:ComplexType, p:Position):ComplexType {
+		assertInitMacrosDone(false);
 		return load("resolve_complex_type", 2)(t, p);
 	}
 
@@ -632,11 +656,16 @@ class Context {
 		This is only defined for `@:build/@:autoBuild` macros.
 	**/
 	public static function getBuildFields():Array<Field> {
+		assertInitMacrosDone(false);
 		return load("get_build_fields", 0)();
 	}
 
 	/**
 		Defines a new type from `TypeDefinition` `t`.
+
+		If a matching module has already been loaded in current context, a
+		`haxe.macro.Expr.Error` compiler error will be raised which can be
+		caught using `try ... catch`.
 
 		If `moduleDependency` is given and is not `null`, it should contain
 		a module path that will be used as a dependency for the newly defined module
@@ -669,6 +698,10 @@ class Context {
 	/**
 		Defines a new module as `modulePath` with several `TypeDefinition`
 		`types`. This is analogous to defining a .hx file.
+
+		If a matching module has already been loaded in current context, a
+		`haxe.macro.Expr.Error` compiler error will be raised which can be
+		caught using `try ... catch`.
 
 		The individual `types` can reference each other and any identifier
 		respects the `imports` and `usings` as usual, expect that imports are
@@ -773,8 +806,7 @@ class Context {
 		run your code once typer is ready to be used.
 	**/
 	public static function registerModuleDependency(modulePath:String, externFile:String) {
-		assertInitMacrosDone();
-		load("register_module_dependency", 2)(modulePath, externFile);
+		onAfterInitMacros(() -> load("register_module_dependency", 2)(modulePath, externFile));
 	}
 
 	/**
@@ -847,13 +879,7 @@ class Context {
 	@:allow(haxe.macro.TypedExprTools)
 	@:allow(haxe.macro.PositionTools)
 	static function load(f:String, nargs:Int):Dynamic {
-		#if neko
-		return neko.Lib.load("macro", f, nargs);
-		#elseif eval
 		return eval.vm.Context.callMacroApi(f);
-		#else
-		return Reflect.makeVarArgs(function(_) return throw "Can't be called outside of macro");
-		#end
 	}
 
 	private static function includeFile(file:String, position:String) {
@@ -861,7 +887,7 @@ class Context {
 	}
 
 	private static function sExpr(e:TypedExpr, pretty:Bool):String {
-		return haxe.macro.Context.load("s_expr", 2)(e, pretty);
+		return load("s_expr", 2)(e, pretty);
 	}
 
 	@:allow(haxe.macro.Compiler)
@@ -876,20 +902,19 @@ class Context {
 		}
 	}
 
+	@:allow(haxe.macro.Compiler)
 	private static function assertInitMacrosDone(includeSuggestion = true):Void {
-		#if haxe_next
 		if (!initMacrosDone()) {
 			var stack = getMacroStack();
 			var suggestion = includeSuggestion
 				? "\nUse `Context.onAfterInitMacros` to register a callback to run when context is ready."
 				: "";
 
-			warning(
+			fatalError(
 				"Cannot use this API from initialization macros." + suggestion,
 				if (stack.length > 2) stack[2] else currentPos()
 			);
 		}
-		#end
 	}
 	#end
 }

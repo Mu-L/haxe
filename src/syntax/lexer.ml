@@ -210,27 +210,19 @@ let find_line p f =
 		loop 0 (Array.length f.lalines)
 
 (* resolve a position within a non-haxe file by counting newlines *)
-let resolve_pos file =
-	let ch = open_in_bin file in
-	let f = make_file file in
+let resolve_pos f next skip =
 	let rec loop p =
 		let inc i () =
 			f.lline <- f.lline + 1;
 			f.llines <- (p + i,f.lline) :: f.llines;
 			i
 		in
-		let i = match input_char ch with
+		let i = match next() with
 			| '\n' -> inc 1
 			| '\r' ->
-				ignore(input_char ch);
+				skip 1;
 				inc 2
 			| c -> (fun () ->
-				let rec skip n =
-					if n > 0 then begin
-						ignore(input_char ch);
-						skip (n - 1)
-					end
-				in
 				let code = int_of_char c in
 				if code < 0xC0 then ()
 				else if code < 0xE0 then skip 1
@@ -241,8 +233,35 @@ let resolve_pos file =
 		in
 		loop (p + i())
 	in
+	loop 0
+
+let resolve_file_content_pos file content =
+	let f = make_file file in
+	let i = ref 0 in
+	let next () =
+		try
+			let ret = String.get content !i in
+			incr i;
+			ret
+		with Invalid_argument _ -> raise End_of_file
+	in
+	let skip n =
+		i := !i + n
+	in
+	try resolve_pos f next skip with End_of_file -> f
+
+let resolve_file_pos file =
+	let ch = open_in_bin file in
+	let f = make_file file in
+	let next () = input_char ch in
+	let rec skip n =
+		if n > 0 then begin
+			ignore(next ());
+			skip (n - 1)
+		end
+	in
 	try
-		loop 0
+		resolve_pos f next skip
 	with End_of_file ->
 		close_in ch;
 		f
@@ -252,7 +271,7 @@ let find_file file =
 		Hashtbl.find all_files file
 	with Not_found ->
 		try
-			let f = resolve_pos file in
+			let f = resolve_file_pos file in
 			Hashtbl.add all_files file f;
 			f
 		with Sys_error _ ->
@@ -360,6 +379,9 @@ let integer_digits = [%sedlex.regexp? (digit, Star sep_digit)]
 let hex_digit = [%sedlex.regexp? '0'..'9'|'a'..'f'|'A'..'F']
 let sep_hex_digit = [%sedlex.regexp? Opt '_', hex_digit]
 let hex_digits = [%sedlex.regexp? (hex_digit, Star sep_hex_digit)]
+let bin_digit = [%sedlex.regexp? '0'|'1']
+let sep_bin_digit = [%sedlex.regexp? Opt '_', bin_digit]
+let bin_digits = [%sedlex.regexp? (bin_digit, Star sep_bin_digit)]
 let integer = [%sedlex.regexp? ('1'..'9', Star sep_digit) | '0']
 
 let integer_suffix = [%sedlex.regexp? Opt '_', ('i'|'u'), Plus integer]
@@ -385,6 +407,8 @@ let rec token lexbuf =
 	| "\r\n" -> newline lexbuf; token lexbuf
 	| '\n' | '\r' -> newline lexbuf; token lexbuf
 	| "0x", Plus hex_digits, Opt integer_suffix ->
+		mk lexbuf (split_int_suffix (lexeme lexbuf))
+	| "0b", Plus bin_digits, Opt integer_suffix ->
 		mk lexbuf (split_int_suffix (lexeme lexbuf))
 	| integer, Opt integer_suffix ->
 		mk lexbuf (split_int_suffix (lexeme lexbuf))

@@ -24,13 +24,11 @@ package haxe.macro;
 
 import haxe.display.Display;
 import haxe.macro.Expr;
+import haxe.hxb.WriterConfig;
 
 /**
 	All these methods can be called for compiler configuration macros.
 **/
-#if hl
-@:hlNative("macro")
-#end
 class Compiler {
 	/**
 		A conditional compilation flag can be set on the command line using
@@ -53,14 +51,12 @@ class Compiler {
 		return macro $v{haxe.macro.Context.definedValue(key)};
 	}
 
-	#if (neko || (macro && hl) || (macro && eval))
+	#if macro
 	static var ident = ~/^[A-Za-z_][A-Za-z0-9_]*$/;
 	static var path = ~/^[A-Za-z_][A-Za-z0-9_.]*$/;
 
 	public static function allowPackage(v:String) {
-		#if (neko || eval)
 		load("allow_package", 1)(v);
-		#end
 	}
 
 	/**
@@ -69,69 +65,8 @@ class Compiler {
 		Usage of this function outside of initialization macros is deprecated and may cause compilation server issues.
 	**/
 	public static function define(flag:String, ?value:String) {
-		#if (neko || eval)
 		Context.assertInitMacro();
 		load("define", 2)(flag, value);
-		#end
-	}
-
-	#if (!neko && !eval)
-	private static function typePatch(cl:String, f:String, stat:Bool, t:String) {}
-
-	private static function metaPatch(meta:String, cl:String, f:String, stat:Bool) {}
-
-	private static function addGlobalMetadataImpl(pathFilter:String, meta:String, recursive:Bool, toTypes:Bool, toFields:Bool) {}
-	#end
-
-	/**
-		Removes a (static) field from a given class by name.
-		An error is thrown when `className` or `field` is invalid.
-	**/
-	@:deprecated
-	public static function removeField(className:String, field:String, ?isStatic:Bool) {
-		if (!path.match(className))
-			throw "Invalid " + className;
-		if (!ident.match(field))
-			throw "Invalid " + field;
-		#if (neko || eval)
-		load("type_patch", 4)(className, field, isStatic == true, null);
-		#else
-		typePatch(className, field, isStatic == true, null);
-		#end
-	}
-
-	/**
-		Set the type of a (static) field at a given class by name.
-		An error is thrown when `className` or `field` is invalid.
-	**/
-	@:deprecated
-	public static function setFieldType(className:String, field:String, type:String, ?isStatic:Bool) {
-		if (!path.match(className))
-			throw "Invalid " + className;
-		if (!ident.match((field.charAt(0) == "$") ? field.substr(1) : field))
-			throw "Invalid " + field;
-		#if (neko || eval)
-		load("type_patch", 4)(className, field, isStatic == true, type);
-		#else
-		typePatch(className, field, isStatic == true, type);
-		#end
-	}
-
-	/**
-		Add metadata to a (static) field or class by name.
-		An error is thrown when `className` or `field` is invalid.
-	**/
-	@:deprecated
-	public static function addMetadata(meta:String, className:String, ?field:String, ?isStatic:Bool) {
-		if (!path.match(className))
-			throw "Invalid " + className;
-		if (field != null && !ident.match(field))
-			throw "Invalid " + field;
-		#if (neko || eval)
-		load("meta_patch", 4)(meta, className, field, isStatic == true);
-		#else
-		metaPatch(meta, className, field, isStatic == true);
-		#end
 	}
 
 	/**
@@ -140,32 +75,20 @@ class Compiler {
 		Usage of this function outside of initialization macros is deprecated and may cause compilation server issues.
 	**/
 	public static function addClassPath(path:String) {
-		#if (neko || eval)
 		Context.assertInitMacro();
 		load("add_class_path", 1)(path);
-		#end
 	}
 
 	public static function getOutput():String {
-		#if (neko || eval)
 		return load("get_output", 0)();
-		#else
-		return null;
-		#end
 	}
 
 	public static function setOutput(fileOrDir:String) {
-		#if (neko || eval)
 		load("set_output", 1)(fileOrDir);
-		#end
 	}
 
 	public static function getDisplayPos():Null<{file:String, pos:Int}> {
-		#if (neko || eval)
 		return load("get_display_pos", 0)();
-		#else
-		return null;
-		#end
 	}
 
 	/**
@@ -174,11 +97,7 @@ class Compiler {
 		Usage of this function outside a macro context returns `null`.
 	**/
 	public static function getConfiguration():Null<CompilerConfiguration> {
-		#if (neko || eval)
 		return load("get_configuration", 0)();
-		#else
-		return null;
-		#end
 	}
 
 	/**
@@ -187,9 +106,7 @@ class Compiler {
 		Usage of this function outside a macro context does nothing.
 	**/
 	public static function setPlatformConfiguration(config:PlatformConfig):Void {
-		#if (neko || eval)
 		load("set_platform_configuration", 1)(config);
-		#end
 	}
 
 	/**
@@ -198,19 +115,8 @@ class Compiler {
 		Usage of this function outside of initialization macros is deprecated and may cause compilation server issues.
 	**/
 	public static function addNativeLib(name:String) {
-		#if (neko || eval)
 		Context.assertInitMacro();
 		load("add_native_lib", 1)(name);
-		#end
-	}
-
-	/**
-		Adds an argument to be passed to the native compiler (e.g. `-javac-arg` for Java).
-	**/
-	public static function addNativeArg(argument:String) {
-		#if (neko || eval)
-		load("add_native_arg", 1)(argument);
-		#end
 	}
 
 	/**
@@ -222,6 +128,8 @@ class Compiler {
 		By default `Compiler.include` will search for modules in the directories defined with `-cp`.
 		If you want to specify a different set of paths to search for modules, you can use the optional
 		argument `classPath`.
+
+		Usage of this function outside of initialization macros is deprecated and may cause compilation server issues.
 
 		@param pack The package dot-path as String. Use `''` to include the root package.
 		@param rec If true, recursively adds all sub-packages.
@@ -290,7 +198,7 @@ class Compiler {
 						var cl = prefix + file.substr(0, file.length - 3);
 						if (skip(cl))
 							continue;
-						Context.getModule(cl);
+						load("include_module", 1)(cl);
 					} else if (rec && sys.FileSystem.isDirectory(path + "/" + file) && !skip(prefix + file))
 						include(prefix + file, true, ignore, classPaths);
 				}
@@ -299,11 +207,8 @@ class Compiler {
 				Context.error('Package "$pack" was not found in any of class paths', Context.currentPos());
 		}
 
-		if (!Context.initMacrosDone()) {
-			Context.onAfterInitMacros(() -> include(pack, rec, ignore, classPaths, strict));
-		} else {
-			include(pack, rec, ignore, classPaths, strict);
-		}
+		Context.assertInitMacro();
+		Context.onAfterInitMacros(() -> include(pack, rec, ignore, classPaths, strict));
 	}
 
 	/**
@@ -333,7 +238,13 @@ class Compiler {
 				switch (t) {
 					case TInst(c, _):
 						name = c.toString();
-						b = c.get();
+						var c = c.get();
+						switch (c.kind) {
+							case KModuleFields(module):
+								name = module;
+							case _:
+						}
+						b = c;
 					case TEnum(e, _):
 						name = e.toString();
 						b = e.get();
@@ -375,61 +286,6 @@ class Compiler {
 				}
 			}
 		});
-	}
-
-	/**
-		Load a type patch file that can modify the field types within declared classes and enums.
-	**/
-	public static function patchTypes(file:String):Void {
-		var file = Context.resolvePath(file);
-		var f = sys.io.File.read(file, true);
-		try {
-			while (true) {
-				var r = StringTools.trim(f.readLine());
-				if (r == "" || r.substr(0, 2) == "//")
-					continue;
-				if (StringTools.endsWith(r, ";"))
-					r = r.substr(0, -1);
-				if (r.charAt(0) == "-") {
-					r = r.substr(1);
-					var isStatic = StringTools.startsWith(r, "static ");
-					if (isStatic)
-						r = r.substr(7);
-					var p = r.split(".");
-					var field = p.pop();
-					removeField(p.join("."), field, isStatic);
-					continue;
-				}
-				if (r.charAt(0) == "@") {
-					var rp = r.split(" ");
-					var type = rp.pop();
-					var isStatic = rp[rp.length - 1] == "static";
-					if (isStatic)
-						rp.pop();
-					var meta = rp.join(" ");
-					var p = type.split(".");
-					var field = if (p.length > 1 && p[p.length - 2].charAt(0) >= "a") null else p.pop();
-					addMetadata(meta, p.join("."), field, isStatic);
-					continue;
-				}
-				if (StringTools.startsWith(r, "enum ")) {
-					define("enumAbstract:" + r.substr(5));
-					continue;
-				}
-				var rp = r.split(" : ");
-				if (rp.length > 1) {
-					r = rp.shift();
-					var isStatic = StringTools.startsWith(r, "static ");
-					if (isStatic)
-						r = r.substr(7);
-					var p = r.split(".");
-					var field = p.pop();
-					setFieldType(p.join("."), field, rp.join(" : "), isStatic);
-					continue;
-				}
-				throw "Invalid type patch " + r;
-			}
-		} catch (e:haxe.io.Eof) {}
 	}
 
 	/**
@@ -483,11 +339,13 @@ class Compiler {
 		through `Context.getType`.
 	**/
 	public static function addGlobalMetadata(pathFilter:String, meta:String, ?recursive:Bool = true, ?toTypes:Bool = true, ?toFields:Bool = false) {
-		#if (neko || eval)
 		load("add_global_metadata_impl", 5)(pathFilter, meta, recursive, toTypes, toFields);
-		#else
-		addGlobalMetadataImpl(pathFilter, meta, recursive, toTypes, toFields);
-		#end
+	}
+
+	@:deprecated
+	public static function addMetadata(meta:String, className:String, ?field:String, ?isStatic:Bool) {
+		var pathFilter = field == null ? className : '$className.$field';
+		addGlobalMetadata(pathFilter, meta, false, field == null, field != null);
 	}
 
 	/**
@@ -513,45 +371,63 @@ class Compiler {
 	}
 
 	/**
-		Register a custom medatada for documentation and completion purposes
+		Register a custom metadata for documentation and completion purposes
 	**/
 	public static function registerCustomMetadata(meta:MetadataDescription, ?source:String):Void {
-		#if (neko || eval)
 		load("register_metadata_impl", 2)(meta, source);
-		#end
 	}
 
 	/**
 		Register a custom define for documentation purposes
 	**/
 	public static function registerCustomDefine(define:DefineDescription, ?source:String):Void {
-		#if (neko || eval)
 		load("register_define_impl", 2)(define, source);
-		#end
 	}
 
 	/**
 		Change the default JS output by using a custom generator callback
 	**/
 	public static function setCustomJSGenerator(callb:JSGenApi->Void) {
-		#if (neko || eval)
 		load("set_custom_js_generator", 1)(callb);
-		#end
 	}
 
-	#if (neko || eval)
 	static inline function load(f, nargs):Dynamic {
 		return @:privateAccess Context.load(f, nargs);
 	}
-	#end
 
 	/**
 		Clears cached results of file lookups
 	**/
 	public static function flushDiskCache() {
-		#if (neko || eval)
 		load("flush_disk_cache", 0)();
-		#end
+	}
+
+	/**
+		Gets the current hxb writer configuration, if any.
+	**/
+	static public function getHxbWriterConfiguration():Null<WriterConfig> {
+		return load("get_hxb_writer_config", 0)();
+	}
+
+	/**
+		Sets the hxb writer configuration to `config`. If no hxb writer configuration
+		exists, it is created.
+
+		The intended usage is
+
+		```
+		var config = Compiler.getHxbWriterConfiguration();
+		config.archivePath = "newPath.zip";
+		// Other changes
+		Compiler.setHxbWriterConfiguration(config);
+		```
+
+		If `config` is `null`, hxb writing is disabled.
+
+		@see haxe.hxb.WriterConfig
+	**/
+	static public function setHxbWriterConfiguration(config:Null<WriterConfig>) {
+		load("set_hxb_writer_config", 1)(config);
 	}
 	#end
 
@@ -764,8 +640,7 @@ enum Platform {
 	Flash;
 	Php;
 	Cpp;
-	Cs;
-	Java;
+	Jvm;
 	Python;
 	Hl;
 	Eval;

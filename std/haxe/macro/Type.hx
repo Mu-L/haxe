@@ -612,7 +612,7 @@ typedef MetaAccess = {
  */
 enum FieldKind {
 	/**
-		A variable of property, depending on the `read` and `write` values.
+		A variable or property, depending on the `read` and `write` values.
 	**/
 	FVar(read:VarAccess, write:VarAccess);
 
@@ -734,42 +734,6 @@ enum TConstant {
 		The constant `super`.
 	**/
 	TSuper;
-}
-
-/**
-	Represents a variable in the typed AST.
- */
-typedef TVar = {
-	/**
-		The unique ID of the variable.
-	**/
-	public var id(default, never):Int;
-
-	/**
-		The name of the variable.
-	**/
-	public var name(default, never):String;
-
-	/**
-		The type of the variable.
-	**/
-	public var t(default, never):Type;
-
-	/**
-		Whether or not the variable has been captured by a closure.
-	**/
-	public var capture(default, never):Bool;
-
-	/**
-		Special information which is internally used to keep track of closure.
-		information
-	**/
-	public var extra(default, never):Null<{params:Array<TypeParameter>, expr:Null<TypedExpr>}>;
-
-	/**
-		The metadata of the variable.
-	**/
-	public var meta(default, never):Null<MetaAccess>;
 }
 
 /**
@@ -1015,6 +979,47 @@ enum TypedExprDef {
 		An unknown identifier.
 	**/
 	TIdent(s:String);
+}
+
+/**
+	Represents a variable in the typed AST.
+ */
+typedef TVar = {
+	/**
+		The unique ID of the variable.
+	**/
+	public var id(default, never):Int;
+
+	/**
+		The name of the variable.
+	**/
+	public var name(default, never):String;
+
+	/**
+		The type of the variable.
+	**/
+	public var t(default, never):Type;
+
+	/**
+		Whether or not the variable has been captured by a closure.
+	**/
+	public var capture(default, never):Bool;
+
+	/**
+		Special information which is internally used to keep track of closure.
+		information
+	**/
+	public var extra(default, never):Null<{params:Array<TypeParameter>, expr:Null<TypedExpr>}>;
+
+	/**
+		The metadata of the variable.
+	**/
+	public var meta(default, never):Null<MetaAccess>;
+
+	/**
+		Whether the variable is a local static variable
+	**/
+	public var isStatic(default, never):Bool;
 }
 
 /**
